@@ -24,6 +24,8 @@
 //   drag                  turn the character
 //   drag, Shift held      turn the second figure, with the comparison on (E13)
 //   drag, right button    move the camera, up/down and left/right
+//   drag, right, Shift    move the second figure, with the comparison on (E14):
+//                         sideways, and up the screen is away from the camera
 //   drag, Ctrl held       tilt the camera (when the DLL can)
 //   wheel                 zoom in / out (RaceMenu's two positions)
 // In STANDARD only the first of those, the drag, is alive.
@@ -79,10 +81,13 @@
   // handler per type); `copyTurn` is what the Shift drag has turned her since the last send.
   let compareOn = false;
   let copyTurn = 0;
+  // E14: what Shift + the right button has moved her since the last send, in world units.
+  const copyMove = { across: 0, depth: 0 };
   document.addEventListener("lifecast-compare", (e) => {
     compareOn = !!(e.detail && e.detail.on);
     if (!compareOn) {
       copyTurn = 0;
+      copyMove.across = copyMove.depth = 0;
     }
   });
 
@@ -93,6 +98,11 @@
       const deg = Math.max(-180, Math.min(180, copyTurn));
       copyTurn = 0;
       LifecastBridge.send("compare-turn", { deg: deg });
+    }
+    if (copyMove.across || copyMove.depth) {
+      const data = { across: copyMove.across, depth: copyMove.depth };
+      copyMove.across = copyMove.depth = 0;
+      LifecastBridge.send("compare-move", data);
     }
     const moved = pending.turn || pending.distance || pending.lift || pending.pan || pending.tilt;
     if (!moved) {
@@ -131,6 +141,18 @@
     // on the screen: measured with both at +90 the character faces the right and the copy the left. The drag has to
     // feel the same for both, so the sign is taken here.
     copyTurn -= amount;
+    if (timer === null) {
+      timer = setTimeout(flush, SEND_MS);
+    }
+  }
+
+  function moveCopyPlace(across, depth) {
+    if (!state || !state.ready || !compareOn || (!across && !depth)) {
+      return;
+    }
+    // The DLL keeps the total and cuts it to its limits; this only gathers the drag between two sends.
+    copyMove.across += across;
+    copyMove.depth += depth;
     if (timer === null) {
       timer = setTimeout(flush, SEND_MS);
     }
@@ -220,7 +242,9 @@
     }
     // Standard: the left button turns, and nothing else answers. With the comparison on, Shift + the left button
     // turns the copy instead of the character (E13); without Shift, or without the comparison, nothing changes.
+    // Shift + the right button moves her (E14); without Shift the right button is still the camera's lift.
     const mode = (compareOn && e.shiftKey && e.button === 0 && !e.ctrlKey) ? "copy"
+      : (compareOn && e.shiftKey && e.button === 2 && !e.ctrlKey) ? "copy-move"
       : !state.free ? (e.button === 0 && !e.ctrlKey ? "turn" : null)
       : (e.button === 2 ? "lift" : (e.ctrlKey ? "tilt" : (e.button === 0 ? "turn" : null)));
     if (!mode) {
@@ -242,6 +266,10 @@
     drag.y = e.clientY;
     if (drag.mode === "copy") {
       moveCopy(dx * TURN_PER_PX);
+    } else if (drag.mode === "copy-move") {
+      // She follows the cursor: right is right on the screen, and up the screen is away from the camera. The scale
+      // is the pan's, world units per pixel.
+      moveCopyPlace(dx * PAN_PER_PX, -dy * PAN_PER_PX);
     } else if (drag.mode === "turn") {
       move("turn", dx * TURN_PER_PX);
     } else if (drag.mode === "lift") {

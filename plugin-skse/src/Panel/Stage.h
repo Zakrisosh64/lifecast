@@ -346,7 +346,8 @@ namespace Lifecast::Panel::Stage
 
 	// Where the second subject has to STAND for the rule above to be framing
 	// her and not an empty patch of floor: the player's own position, moved
-	// kPairApart across the line of sight in the ground plane.
+	// kPairApart across the line of sight in the ground plane, plus the shift
+	// the player gave her (PairShift, below).
 	//
 	// It is published rather than duplicated on purpose. Edit/Compare places
 	// her and this module frames her, and if each worked out the offset for
@@ -360,6 +361,34 @@ namespace Lifecast::Panel::Stage
 	// cleared when the menu closes, which is why reading it from the game
 	// thread is a read of two numbers that do not change during an opening.
 	bool PairSpot(RE::NiPoint3& a_out);
+
+	// Where the player has MOVED the second subject from that spot (E14), in
+	// world units: `across` along the same screen right PairSpot uses, `depth`
+	// along the line of sight, positive away from the camera. PairSpot and the
+	// framing rule's aim both add it, so the two still agree - the reason the
+	// spot is published at all. Edit/Compare writes it, from the game thread;
+	// the rule reads it on the UI thread, so it is kept in two atomics.
+	struct PairShift
+	{
+		double across = 0.0;
+		double depth = 0.0;
+	};
+
+	// Adds a delta and cuts the total to its limits: `across` so that she
+	// stands between half and three times kPairApart to the player's right
+	// (never on top of her), `depth` between half kPairApart towards the
+	// camera and twice it away (V107: pushed towards the camera, past a point
+	// she disappears). Returns what is kept; a_cut says whether the cut took
+	// anything off.
+	PairShift ShiftPair(double a_across, double a_depth, bool& a_cut);
+	PairShift PairShiftNow();
+	void      ClearPairShift();
+
+	// Where a world point stands from the player in the same two axes, read
+	// from the camera that is drawing now: `across` to screen right, `depth`
+	// away from the camera. What PairSpot put there reads kPairApart plus the
+	// shift across, and the shift in depth. False without a kept frame.
+	bool PairReads(const RE::NiPoint3& a_at, double& a_across, double& a_depth);
 
 	// One step of the slide, when there is one under way. Game thread, and a
 	// single atomic read when there is not - it is called from the input tick

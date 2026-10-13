@@ -83,6 +83,12 @@
 //                                 unless the comparison is on. She turns about her
 //                                 own spot; the total is kept until the editor
 //                                 closes, and Place() gives it back.
+//   page -> dll  "compare-move" { "across": number, "depth": number }  a DELTA in
+//                                 world units, either key may be left out; ignored
+//                                 unless the comparison is on. across is screen
+//                                 right, depth away from the camera. The total is
+//                                 kept by Stage (PairShift), cut to its limits,
+//                                 and kept like the turn.
 //   dll -> page  "compare"      { "on": bool, "why": text when it refused }
 //
 // "frame" is the stage element's own left and right edge as a fraction of

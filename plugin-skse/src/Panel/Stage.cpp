@@ -203,6 +203,11 @@ namespace Lifecast::Panel::Stage
 		double g_pairRight = 1.0;
 		int    g_pairSolves = 0;  // how many times the rule has solved for this pairing
 
+		// Where the player moved the second subject (PairShift, Stage.h). Written
+		// on the game thread by Edit/Compare, read here on the UI thread.
+		std::atomic<double> g_shiftAcross{ 0.0 };
+		std::atomic<double> g_shiftDepth{ 0.0 };
+
 		// The single-figure framing rule (UI thread), kept apart from the pair's
 		// state rather than folded into it: the two rules answer different
 		// questions, only one may own the camera at a time, and sharing the
@@ -520,10 +525,16 @@ namespace Lifecast::Panel::Stage
 			// two figures on screen. Pushing the other subject TOWARDS the
 			// camera does not make her bigger: past a point she disappears
 			// (V107), so this offset has no component along the line of sight.
+			//
+			// The player's own shift of her (E14) is added on the same two
+			// axes: across on the perpendicular, depth along -dir, which is
+			// away from the camera. Both are zero until she is moved.
 			const double perpX = -g_frame.dirY;
 			const double perpY = g_frame.dirX;
-			a_other = RE::NiPoint3(static_cast<float>(a_player.x + perpX * kPairApart),
-				static_cast<float>(a_player.y + perpY * kPairApart), a_player.z);
+			const double across = kPairApart + g_shiftAcross.load(std::memory_order_relaxed);
+			const double depth = g_shiftDepth.load(std::memory_order_relaxed);
+			a_other = RE::NiPoint3(static_cast<float>(a_player.x + perpX * across - g_frame.dirX * depth),
+				static_cast<float>(a_player.y + perpY * across - g_frame.dirY * depth), a_player.z);
 			return true;
 		}
 
@@ -615,8 +626,24 @@ namespace Lifecast::Panel::Stage
 			// line of sight and depth along it. Two points at the same depth
 			// give k, and k with either point gives x0. Both are properties of
 			// THIS opening, not of this file.
+			//
+			// The second aim is `apart` to the side and `deeper` further away
+			// once the player has moved her (E14); with both at their resting
+			// values (kPairApart, 0) this is the same k as before. With depth,
+			// the two points no longer share one, so k takes each at its own;
+			// the distance and pan below stay the same-depth model, and the
+			// audit after the slide is what measures how far that is off.
 			const double now = g_at.distance;
-			const double k = sepNow * now / kPairApart;
+			const double apart = kPairApart + g_shiftAcross.load(std::memory_order_relaxed);
+			const double deeper = g_shiftDepth.load(std::memory_order_relaxed);
+			const double per = (apart - g_at.pan) / (now + deeper) + g_at.pan / now;
+			if (!(now + deeper > 1.0) || std::abs(per) < 1e-6) {
+				spdlog::warn("[stage] pair {}: the second aim is {:.1f} deeper at distance {:.2f} - no camera scale can "
+							 "be read from that",
+					a_when, deeper, now);
+				return false;
+			}
+			const double k = sepNow / per;
 			const double x0 = x1 + k * g_at.pan / now;
 
 			// Distance so the pair spans what was asked: the separation on
@@ -629,12 +656,13 @@ namespace Lifecast::Panel::Stage
 			// view. The middle of the pair is half the separation to the side
 			// of the player, so the camera has to go the same way.
 			const double centre = (g_pairLeft + g_pairRight) / 2.0;
-			const double wantedPan = kPairApart / 2.0 - (centre - x0) * distance / k;
+			const double wantedPan = apart / 2.0 - (centre - x0) * distance / k;
 			const double pan = ClampSaid(wantedPan, -kPanMax, kPanMax, "pan");
 
 			spdlog::info("[stage] pair {}: view {:.3f}..{:.3f}, asking for {:.3f} of the window between the heads. "
-						 "Measured k {:.4f} and centre-of-view {:.4f} at distance {:.2f}, pan {:.2f}",
-				a_when, g_pairLeft, g_pairRight, want, k, x0, now, g_at.pan);
+						 "Measured k {:.4f} and centre-of-view {:.4f} at distance {:.2f}, pan {:.2f}; the second aim "
+						 "{:.1f} across, {:+.1f} deep",
+				a_when, g_pairLeft, g_pairRight, want, k, x0, now, g_at.pan, apart, deeper);
 			spdlog::info("[stage] pair {}: solved distance {:.2f} (wanted {:.2f}) and pan {:.2f} (wanted {:.2f}){}",
 				a_when, distance, wantedDistance, pan, wantedPan,
 				(distance != wantedDistance || pan != wantedPan)
@@ -2249,12 +2277,11 @@ namespace Lifecast::Panel::Stage
 		Queue(p);
 	}
 
-	bool PairSpot(RE::NiPoint3& a_out)
+	namespace
 	{
-		auto* player = RE::PlayerCharacter::GetSingleton();
-		if (!player || !g_frame.have) {
-			return false;
-		}
+		// Screen right and the line of sight away from the camera, in the
+		// ground plane, for PairSpot and PairReads alike.
+		//
 		// Which way is screen right is read NOW, from the camera that is drawing, and not from the frame kept when
 		// the menu opened: RaceMenu moves its camera after that (and a game camera turned to the side before the
 		// menu opened leaves it tens of degrees off the line to the player), so the opening frame's perpendicular
@@ -2262,20 +2289,86 @@ namespace Lifecast::Panel::Stage
 		// along, 54 across, against 11 and 59 with this read). Two things change together, the point (the camera's
 		// real right, not the player-camera perpendicular) and the instant of the read (now, not the opening); the
 		// kept frame is the fallback when the camera gives no usable forward.
-		double rightX = g_frame.rightX;
-		double rightY = g_frame.rightY;
-		if (auto* wc = RE::Main::WorldRootCamera()) {
-			const double fx = wc->world.rotate.entry[0][0];
-			const double fy = wc->world.rotate.entry[1][0];
-			const double fl = std::sqrt(fx * fx + fy * fy);
-			if (fl > 0.05) {
-				rightX = fy / fl;
-				rightY = -fx / fl;
+		void PairAxes(double& a_rightX, double& a_rightY, double& a_awayX, double& a_awayY)
+		{
+			a_rightX = g_frame.rightX;
+			a_rightY = g_frame.rightY;
+			if (auto* wc = RE::Main::WorldRootCamera()) {
+				const double fx = wc->world.rotate.entry[0][0];
+				const double fy = wc->world.rotate.entry[1][0];
+				const double fl = std::sqrt(fx * fx + fy * fy);
+				if (fl > 0.05) {
+					a_rightX = fy / fl;
+					a_rightY = -fx / fl;
+				}
 			}
+			// Away from the camera is screen right turned back a quarter: right
+			// is (fy, -fx) of the forward (fx, fy), so the forward is (-ry, rx).
+			a_awayX = -a_rightY;
+			a_awayY = a_rightX;
 		}
+	}
+
+	bool PairSpot(RE::NiPoint3& a_out)
+	{
+		auto* player = RE::PlayerCharacter::GetSingleton();
+		if (!player || !g_frame.have) {
+			return false;
+		}
+		double rightX = 0.0;
+		double rightY = 0.0;
+		double awayX = 0.0;
+		double awayY = 0.0;
+		PairAxes(rightX, rightY, awayX, awayY);
+		const double       across = kPairApart + g_shiftAcross.load(std::memory_order_relaxed);
+		const double       depth = g_shiftDepth.load(std::memory_order_relaxed);
 		const RE::NiPoint3 at = player->GetPosition();
-		a_out = RE::NiPoint3(static_cast<float>(at.x + rightX * kPairApart),
-			static_cast<float>(at.y + rightY * kPairApart), at.z);
+		a_out = RE::NiPoint3(static_cast<float>(at.x + rightX * across + awayX * depth),
+			static_cast<float>(at.y + rightY * across + awayY * depth), at.z);
+		return true;
+	}
+
+	PairShift ShiftPair(double a_across, double a_depth, bool& a_cut)
+	{
+		const double acrossAsked = g_shiftAcross.load(std::memory_order_relaxed) + a_across;
+		const double depthAsked = g_shiftDepth.load(std::memory_order_relaxed) + a_depth;
+		// The limits are on where she ends up, so the across one is on the
+		// whole distance to the side and the shift is what is left of it.
+		const double across = std::clamp(acrossAsked, -0.5 * kPairApart, 2.0 * kPairApart);
+		const double depth = std::clamp(depthAsked, -0.5 * kPairApart, 2.0 * kPairApart);
+		a_cut = across != acrossAsked || depth != depthAsked;
+		g_shiftAcross.store(across, std::memory_order_relaxed);
+		g_shiftDepth.store(depth, std::memory_order_relaxed);
+		return { across, depth };
+	}
+
+	PairShift PairShiftNow()
+	{
+		return { g_shiftAcross.load(std::memory_order_relaxed), g_shiftDepth.load(std::memory_order_relaxed) };
+	}
+
+	void ClearPairShift()
+	{
+		g_shiftAcross.store(0.0, std::memory_order_relaxed);
+		g_shiftDepth.store(0.0, std::memory_order_relaxed);
+	}
+
+	bool PairReads(const RE::NiPoint3& a_at, double& a_across, double& a_depth)
+	{
+		auto* player = RE::PlayerCharacter::GetSingleton();
+		if (!player || !g_frame.have) {
+			return false;
+		}
+		double rightX = 0.0;
+		double rightY = 0.0;
+		double awayX = 0.0;
+		double awayY = 0.0;
+		PairAxes(rightX, rightY, awayX, awayY);
+		const RE::NiPoint3 at = player->GetPosition();
+		const double       dx = a_at.x - at.x;
+		const double       dy = a_at.y - at.y;
+		a_across = dx * rightX + dy * rightY;
+		a_depth = dx * awayX + dy * awayY;
 		return true;
 	}
 

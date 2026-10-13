@@ -1482,9 +1482,12 @@ namespace Lifecast::Edit::Compare
 				return false;
 			}
 
-			auto* ref = TwinRef();
-			spdlog::info("[compare] place: MoveTo(player), then {} - she was at {}, turn kept {:+.1f} deg", P(spot),
-				P(ref->GetPosition()), static_cast<double>(g_turn) * 180.0 / 3.14159265358979323846);
+			auto*      ref = TwinRef();
+			const auto shift = Panel::Stage::PairShiftNow();
+			spdlog::info("[compare] place: MoveTo(player), then {} - she was at {}, turn kept {:+.1f} deg, moved kept "
+						 "across {:+.1f} depth {:+.1f}",
+				P(spot), P(ref->GetPosition()), static_cast<double>(g_turn) * 180.0 / 3.14159265358979323846,
+				shift.across, shift.depth);
 			ref->MoveTo(player);
 			ref->SetPosition(spot);
 			auto heading = player->GetAngle();
@@ -1951,6 +1954,76 @@ namespace Lifecast::Edit::Compare
 				asked, static_cast<double>(g_turn) * 180.0 / kPi, ref->GetAngle().z, player->GetAngle().z, took);
 		}
 
+		// Moves her by a DELTA, in world units, on the two axes Stage keeps the
+		// shift in (screen right, and away from the camera). The total is cut to
+		// Stage's limits, and she goes to PairSpot - which now includes it - by
+		// SetPosition and the same Update3DPosition(true) Place() ends on. No
+		// MoveTo: she stays in this cell (moving within the cell with the menu
+		// open keeps her drawn, boot 80) and keeps her turn. The camera is not
+		// moved; the next framing solve aims at where she is.
+		void OnCompareMove(const nlohmann::json& a_data)
+		{
+			if (!Session::MenuOpen() || !g_on) {
+				spdlog::warn("[compare] compare-move with the comparison off or the editor closed - ignored");
+				return;
+			}
+			if (!a_data.is_object()) {
+				spdlog::warn("[compare] compare-move without an object - ignored");
+				return;
+			}
+			double asked[2] = { 0.0, 0.0 };
+			bool   any = false;
+			int    i = 0;
+			for (const char* key : { "across", "depth" }) {
+				if (a_data.contains(key)) {
+					if (!a_data[key].is_number() || !std::isfinite(a_data[key].get<double>())) {
+						spdlog::warn("[compare] compare-move: \"{}\" is not a finite number - ignored", key);
+						return;
+					}
+					asked[i] = a_data[key].get<double>();
+					any = true;
+				}
+				++i;
+			}
+			if (!any) {
+				spdlog::warn("[compare] compare-move without \"across\" or \"depth\" - ignored");
+				return;
+			}
+			if (g_rebirth.pending) {
+				spdlog::warn("[compare] compare-move while a new copy is being made - ignored");
+				return;
+			}
+			auto* player = Player();
+			auto* ref = TwinRef();
+			if (!player || !ref || !TwinHere() || !ref->Is3DLoaded()) {
+				spdlog::warn("[compare] compare-move: there is no second figure with a body in this room - ignored");
+				return;
+			}
+
+			const auto t0 = Clock::now();
+			const auto before = Panel::Stage::PairShiftNow();
+			bool       cut = false;
+			const auto kept = Panel::Stage::ShiftPair(asked[0], asked[1], cut);
+			RE::NiPoint3 spot;
+			if (!Panel::Stage::PairSpot(spot)) {
+				spdlog::warn("[compare] compare-move: Stage has no kept frame - the shift is kept, she is not moved");
+				return;
+			}
+			ref->SetPosition(spot);
+			ref->Update3DPosition(true);
+			const double took = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+			double       readAcross = 0.0;
+			double       readDepth = 0.0;
+			Panel::Stage::PairReads(ref->GetPosition(), readAcross, readDepth);
+			spdlog::info("[compare] move: asked across {:+.1f} depth {:+.1f}, kept across {:+.1f} depth {:+.1f}{}, she "
+						 "reads {} - {:.1f} across and {:+.1f} deep from the player, took {:.3f} ms",
+				asked[0], asked[1], kept.across, kept.depth,
+				cut ? fmt::format(" (CUT: the sum was across {:+.1f} depth {:+.1f})", before.across + asked[0],
+						  before.depth + asked[1]) :
+					  std::string(),
+				P(ref->GetPosition()), readAcross, readDepth, took);
+		}
+
 		void OnCompareSet(const nlohmann::json& a_data)
 		{
 			if (!Session::MenuOpen()) {
@@ -2119,6 +2192,7 @@ namespace Lifecast::Edit::Compare
 		{
 			g_on = false;
 			g_turn = 0.0f;
+			Panel::Stage::ClearPairShift();
 			g_why.clear();
 			// Read first, before anything this opening does: the console is still
 			// open here when the editor was opened from it (the switcher only
@@ -2176,6 +2250,12 @@ namespace Lifecast::Edit::Compare
 					static_cast<double>(g_turn) * 180.0 / 3.14159265358979323846);
 			}
 			g_turn = 0.0f;
+			if (const auto shift = Panel::Stage::PairShiftNow(); shift.across != 0.0 || shift.depth != 0.0) {
+				spdlog::info("[compare] move: kept across +0.0 depth +0.0 (the editor closed; it was across {:+.1f} depth "
+							 "{:+.1f})",
+					shift.across, shift.depth);
+			}
+			Panel::Stage::ClearPairShift();
 			// Culled is not gone: until the Disable below she can still be
 			// talked to in the world (E36). Not from now on.
 			if (auto* actor = Twin()) {
@@ -2231,6 +2311,7 @@ namespace Lifecast::Edit::Compare
 		Panel::Bridge::On("compare-set", &OnCompareSet);
 		Panel::Bridge::On("compare-update", &OnCompareUpdate);
 		Panel::Bridge::On("compare-turn", &OnCompareTurn);
+		Panel::Bridge::On("compare-move", &OnCompareMove);
 #ifdef LIFECAST_TUNING
 		Panel::Bridge::On("compare-dress", &OnCompareDress);
 		Panel::Bridge::On("compare-graph", &OnCompareGraph);
@@ -2271,6 +2352,7 @@ namespace Lifecast::Edit::Compare
 		g_cellId = 0;
 		g_on = false;
 		g_turn = 0.0f;
+		Panel::Stage::ClearPairShift();
 	}
 
 	void MirrorWorn()
