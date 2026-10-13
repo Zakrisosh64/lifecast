@@ -82,7 +82,7 @@ namespace Lifecast::Panel::Switcher
 				}
 				++g_loads.heard;
 				g_loads.ok += ok ? 1 : 0;
-				spdlog::info("[switch] loadedPreset heard while the window is in front: success {} ({} heard, {} ok)", ok,
+				spdlog::info("[switch] loadedPreset heard while the panel is away: success {} ({} heard, {} ok)", ok,
 					g_loads.heard, g_loads.ok);
 			}
 		};
@@ -114,13 +114,18 @@ namespace Lifecast::Panel::Switcher
 			movie->CreateString(&member, "heard");
 			g_listener = std::array<RE::GFxValue, 3>{ type, scope, member };
 			const bool added = editor.Invoke("addEventListener", *g_listener);
-			spdlog::info("[switch] listening for loadedPreset while the window is in front: {}", added);
+			spdlog::info("[switch] listening for loadedPreset while RaceMenu or a window of another mod is in front: {}", added);
 		}
 
-		// Returns how many loads the window made that succeeded.
+		// Returns how many loads were heard that succeeded since ListenForLoads().
+		// 0 when nothing was listening: a count left over from an earlier menu
+		// session must not read as a load.
 		std::uint32_t StopListening()
 		{
-			if (g_listener) {
+			if (!g_listener) {
+				return 0;
+			}
+			{
 				auto*        ui = RE::UI::GetSingleton();
 				auto         menu = ui ? ui->GetMenu<RE::RaceSexMenu>() : nullptr;
 				auto*        movie = menu ? menu->uiMovie.get() : nullptr;
@@ -130,7 +135,11 @@ namespace Lifecast::Panel::Switcher
 				}
 				g_listener.reset();
 			}
-			return g_loads.ok;
+			const auto ok = g_loads.ok;
+			spdlog::info("[switch] back in front of the panel: {} load(s) heard while it was away, {} ok", g_loads.heard,
+				ok);
+			g_loads = {};
+			return ok;
 		}
 
 		const char* ModeName(Mode a_mode)
@@ -472,7 +481,10 @@ namespace Lifecast::Panel::Switcher
 
 		++g_swaps;
 		spdlog::info("[switch] show the Lifecast (swap #{})", g_swaps);
-		const bool fromWindow = g_mode == Mode::kPortraits;
+		// The window of another mod, or RaceMenu's own film: either may have loaded a
+		// preset while the panel was away (the film's own Presets tab opens the same
+		// window, and its own Load button is the same event).
+		const bool fromWindow = g_mode == Mode::kPortraits || g_mode == Mode::kRaceMenu;
 
 		// The order is the point. The way out exists before the panel can
 		// take the keyboard; focus is the very last thing asked for.
@@ -495,9 +507,7 @@ namespace Lifecast::Panel::Switcher
 			// load it did not make itself - read the character again.
 			if (auto* tasks = SKSE::GetTaskInterface()) {
 				tasks->AddUITask([]() {
-					const auto ok = StopListening();
-					spdlog::info("[switch] back from the window: {} load(s) heard, {} ok", g_loads.heard, ok);
-					if (ok > 0) {
+					if (StopListening() > 0) {
 						Edit::Session::Replaced("a preset was loaded by a window of another mod");
 					}
 				});
@@ -547,6 +557,9 @@ namespace Lifecast::Panel::Switcher
 		SetFilmVisible(true);
 		RaceMenuFilm::Sync();
 		Edit::FilmPaint::Sync("switch to RaceMenu");
+		if (auto* tasks = SKSE::GetTaskInterface()) {
+			tasks->AddUITask([]() { ListenForLoads(); });
+		}
 
 		SetMode(Mode::kRaceMenu);
 	}
