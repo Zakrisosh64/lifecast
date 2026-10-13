@@ -87,8 +87,22 @@ namespace Lifecast::Panel::Switcher
 			}
 		};
 
-		// Alive only between ListenForLoads() and StopListening(), UI thread.
-		std::optional<std::array<RE::GFxValue, 3>> g_listener;
+		// Alive only between ListenForLoads() and StopListening() or the menu
+		// closing, UI thread.
+		//
+		// The three values are managed: each one's destructor goes through an
+		// interface that lives in the film it was made in, and a managed value
+		// holds the object, not the film. The menu holds the film, and the film
+		// can be gone by the time the close event arrives - releasing the values
+		// then writes into a freed film. So the listener holds the film too, and
+		// the members are in this order on purpose: the values go first, the
+		// film after them.
+		struct Listener
+		{
+			RE::GPtr<RE::GFxMovieView>  movie;
+			std::array<RE::GFxValue, 3> args;
+		};
+		std::optional<Listener> g_listener;
 
 		void ListenForLoads()
 		{
@@ -112,8 +126,9 @@ namespace Lifecast::Panel::Switcher
 			scope.SetMember("heard", fn);
 			movie->CreateString(&type, "loadedPreset");
 			movie->CreateString(&member, "heard");
-			g_listener = std::array<RE::GFxValue, 3>{ type, scope, member };
-			const bool added = editor.Invoke("addEventListener", *g_listener);
+			g_listener.reset();
+			g_listener.emplace(Listener{ RE::GPtr<RE::GFxMovieView>(movie), { type, scope, member } });
+			const bool added = editor.Invoke("addEventListener", g_listener->args);
 			spdlog::info("[switch] listening for loadedPreset while RaceMenu or a window of another mod is in front: {}", added);
 		}
 
@@ -130,8 +145,9 @@ namespace Lifecast::Panel::Switcher
 				auto         menu = ui ? ui->GetMenu<RE::RaceSexMenu>() : nullptr;
 				auto*        movie = menu ? menu->uiMovie.get() : nullptr;
 				RE::GFxValue editor;
-				if (movie && movie->GetVariable(&editor, kEditor) && editor.IsObject()) {
-					editor.Invoke("removeEventListener", *g_listener);
+				if (movie && movie == g_listener->movie.get() && movie->GetVariable(&editor, kEditor) &&
+					editor.IsObject()) {
+					editor.Invoke("removeEventListener", g_listener->args);
 				}
 				g_listener.reset();
 			}
@@ -304,8 +320,16 @@ namespace Lifecast::Panel::Switcher
 			// that signal: F4 hides it too, and the player comes back to it.
 			Bridge::Send("menu-closed");
 
-			// The editor goes with the menu; the listener is only let go of.
-			g_listener.reset();
+			// The editor goes with the menu; the listener is only let go of - its
+			// values first, then the film it kept alive for them (Listener).
+			if (g_listener) {
+				auto*      ui = RE::UI::GetSingleton();
+				const auto menu = ui ? ui->GetMenu(RE::RaceSexMenu::MENU_NAME) : nullptr;
+				spdlog::info("[switch] listener let go with the menu: menu still reachable {}, same film {}",
+					menu != nullptr, menu && menu->uiMovie.get() == g_listener->movie.get());
+				g_listener.reset();
+				spdlog::info("[switch] listener released");
+			}
 
 			// The film goes away with the menu. The panel is hidden, not
 			// released: re-creating it would make a new browser instance.
