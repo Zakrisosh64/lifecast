@@ -22,6 +22,17 @@
 // with no list (the engine picks its stack); a list with data on it (temper,
 // enchantment) survives the unequip and goes back as the same instance.
 //
+// Hands: GetWorn() is true for an item in either hand, so the list cannot
+// say which one it was in. The engine's own hand slots are read at undress
+// (Actor::GetEquippedObject, both hands); a weapon or torch that was in the
+// left hand is put back LAST and asked for the left-hand equip slot by name,
+// because with no slot the engine puts a weapon in the right hand and the
+// one put on after it takes its place. A two-hander fills both hands and is
+// one item. The same weapon in both hands is two entries, one per hand.
+// After a dress, ~0.7 s later, each item is read back (which hand it is in,
+// or whether it is worn) and logged: "re-equipped N" counts calls, the
+// "[undress] result:" line counts what the engine actually holds.
+//
 // Mirrors Light's close-time symmetry: whatever this feature changed is put
 // back before the menu closes, same OnMenuClosed hook. A forced close
 // bypasses that hook - which is the one case this feature does not cover,
