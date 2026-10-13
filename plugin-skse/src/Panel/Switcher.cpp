@@ -374,6 +374,7 @@ namespace Lifecast::Panel::Switcher
 		Panel::ArmFocusChord(kSwapKey, 0);
 		Panel::SetVisible(true);
 		SetFilmVisible(false);
+		RaceMenuTabs::LeavePresets();
 
 		g_focusSeen = false;
 		g_shownAt = Clock::now();

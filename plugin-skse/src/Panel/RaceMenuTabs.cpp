@@ -464,6 +464,25 @@ namespace Lifecast::Panel::RaceMenuTabs
 		tasks->AddUITask([a_for]() { SelectNow(a_for); });
 	}
 
+	void LeavePresets()
+	{
+		auto* tasks = SKSE::GetTaskInterface();
+		if (!tasks) {
+			return;
+		}
+		tasks->AddUITask([]() {
+			auto* ui = RE::UI::GetSingleton();
+			auto  menu = ui ? ui->GetMenu(RE::RaceSexMenu::MENU_NAME) : nullptr;
+			auto* movie = menu ? menu->uiMovie.get() : nullptr;
+			if (!movie) {
+				return;
+			}
+			// A mod that hangs a window on the Presets mode keeps it open for as
+			// long as the film stays there; the Sliders mode is where it closes.
+			SelectMode(movie, "leave-presets", "slider");
+		});
+	}
+
 	void Report()
 	{
 		auto* tasks = SKSE::GetTaskInterface();
