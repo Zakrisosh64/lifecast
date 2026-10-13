@@ -79,6 +79,10 @@
 //   page -> dll  "compare-get"  {}
 //   page -> dll  "compare-set"  { "on": bool, "frame": { "left": 0..1,
 //                                 "right": 0..1 } }
+//   page -> dll  "compare-turn" { "deg": number }  a DELTA, |deg| <= 180; ignored
+//                                 unless the comparison is on. She turns about her
+//                                 own spot; the total is kept until the editor
+//                                 closes, and Place() gives it back.
 //   dll -> page  "compare"      { "on": bool, "why": text when it refused }
 //
 // "frame" is the stage element's own left and right edge as a fraction of

@@ -322,6 +322,9 @@
     // successful toggle clears whatever the last refusal said.
     compareNote.textContent = (data && typeof data.why === "string") ? data.why : "";
     renderCompare();
+    // The bridge keeps one handler per message type and this file owns "compare", so stage.js (Shift + drag turns
+    // the copy) is told through the document, as look.js does with "lifecast-look".
+    document.dispatchEvent(new CustomEvent("lifecast-compare", { detail: { on: compareOn } }));
   });
 
   LifecastBridge.whenAttached((ok) => {

@@ -22,6 +22,7 @@
 //
 // In the frame, with the mouse, in FREE:
 //   drag                  turn the character
+//   drag, Shift held      turn the second figure, with the comparison on (E13)
 //   drag, right button    move the camera, up/down and left/right
 //   drag, Ctrl held       tilt the camera (when the DLL can)
 //   wheel                 zoom in / out (RaceMenu's two positions)
@@ -74,8 +75,25 @@
   const pending = { turn: 0, distance: 0, lift: 0, pan: 0, tilt: 0 };
   let timer = null;
 
+  // The Compare copy (E13). `compareOn` is told by control.js, which owns the "compare" message (the bridge keeps one
+  // handler per type); `copyTurn` is what the Shift drag has turned her since the last send.
+  let compareOn = false;
+  let copyTurn = 0;
+  document.addEventListener("lifecast-compare", (e) => {
+    compareOn = !!(e.detail && e.detail.on);
+    if (!compareOn) {
+      copyTurn = 0;
+    }
+  });
+
   function flush() {
     timer = null;
+    if (copyTurn) {
+      // A step is at most 180 degrees; a 50 ms drag is far below that.
+      const deg = Math.max(-180, Math.min(180, copyTurn));
+      copyTurn = 0;
+      LifecastBridge.send("compare-turn", { deg: deg });
+    }
     const moved = pending.turn || pending.distance || pending.lift || pending.pan || pending.tilt;
     if (!moved) {
       return;
@@ -100,6 +118,19 @@
       return;
     }
     pending[key] += amount;
+    if (timer === null) {
+      timer = setTimeout(flush, SEND_MS);
+    }
+  }
+
+  function moveCopy(amount) {
+    if (!state || !state.ready || !compareOn || !amount) {
+      return;
+    }
+    // A positive compare-turn is a positive angle of the copy, and the character's own turn is the other way round
+    // on the screen: measured with both at +90 the character faces the right and the copy the left. The drag has to
+    // feel the same for both, so the sign is taken here.
+    copyTurn -= amount;
     if (timer === null) {
       timer = setTimeout(flush, SEND_MS);
     }
@@ -187,8 +218,10 @@
     if (onControls(e.target) || !state || !state.ready) {
       return;
     }
-    // Standard: the left button turns, and nothing else answers.
-    const mode = !state.free ? (e.button === 0 && !e.ctrlKey ? "turn" : null)
+    // Standard: the left button turns, and nothing else answers. With the comparison on, Shift + the left button
+    // turns the copy instead of the character (E13); without Shift, or without the comparison, nothing changes.
+    const mode = (compareOn && e.shiftKey && e.button === 0 && !e.ctrlKey) ? "copy"
+      : !state.free ? (e.button === 0 && !e.ctrlKey ? "turn" : null)
       : (e.button === 2 ? "lift" : (e.ctrlKey ? "tilt" : (e.button === 0 ? "turn" : null)));
     if (!mode) {
       return;
@@ -207,7 +240,9 @@
     const dy = e.clientY - drag.y;
     drag.x = e.clientX;
     drag.y = e.clientY;
-    if (drag.mode === "turn") {
+    if (drag.mode === "copy") {
+      moveCopy(dx * TURN_PER_PX);
+    } else if (drag.mode === "turn") {
       move("turn", dx * TURN_PER_PX);
     } else if (drag.mode === "lift") {
       // E4 (Fase 6.5): the old vertical-only, inverted

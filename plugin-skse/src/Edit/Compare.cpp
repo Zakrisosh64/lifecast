@@ -19,6 +19,7 @@
 #include "Preset/Library.h"
 
 #include <atomic>
+#include <cmath>
 #include <mutex>
 #include <thread>
 #include <unordered_set>
@@ -67,6 +68,11 @@ namespace Lifecast::Edit::Compare
 		Clock::time_point   g_bornAt{};
 
 		bool        g_on = false;  // the comparison, this opening
+		// How far the player has turned her from the player's own heading, in
+		// radians and kept in (-pi, pi]. Place() adds it, so every placement -
+		// the switch-on, the update, a resync - gives it back; it goes to zero
+		// when the editor closes and with the figure it belongs to.
+		float       g_turn = 0.0f;
 		std::string g_why;         // why the last request refused, for the page
 		bool        g_cull = false;  // cull her as soon as she has a body to cull
 		bool        g_bornBodyless = false;  // g_cull was set when she had no 3D at all
@@ -1477,10 +1483,13 @@ namespace Lifecast::Edit::Compare
 			}
 
 			auto* ref = TwinRef();
-			spdlog::info("[compare] place: MoveTo(player), then {} - she was at {}", P(spot), P(ref->GetPosition()));
+			spdlog::info("[compare] place: MoveTo(player), then {} - she was at {}, turn kept {:+.1f} deg", P(spot),
+				P(ref->GetPosition()), static_cast<double>(g_turn) * 180.0 / 3.14159265358979323846);
 			ref->MoveTo(player);
 			ref->SetPosition(spot);
-			ref->SetAngle(player->GetAngle());
+			auto heading = player->GetAngle();
+			heading.z += g_turn;
+			ref->SetAngle(heading);
 			ref->Update3DPosition(true);
 			spdlog::info("[compare] place: she reads {} - {:.1f} from the player, 3D {}", P(ref->GetPosition()),
 				player->GetPosition().GetDistance(ref->GetPosition()), ref->Is3DLoaded() ? "LOADED" : "not loaded");
@@ -1898,6 +1907,50 @@ namespace Lifecast::Edit::Compare
 		}
 #endif
 
+		// Turns her by a DELTA, in degrees, from where she stands now: SetAngle
+		// with the player's heading plus everything turned so far, then the
+		// same Update3DPosition(true) Place() ends on, and nothing else - no
+		// MoveTo, so she does not leave her spot. Measured (E4, 13 sequences):
+		// this holds for 10 s, and only Place() undoes it; Place() now adds
+		// g_turn, so the update and the switch-on give the turn back.
+		void OnCompareTurn(const nlohmann::json& a_data)
+		{
+			if (!Session::MenuOpen() || !g_on) {
+				spdlog::warn("[compare] compare-turn with the comparison off or the editor closed - ignored");
+				return;
+			}
+			if (!a_data.is_object() || !a_data.contains("deg") || !a_data["deg"].is_number()) {
+				spdlog::warn("[compare] compare-turn without a number \"deg\" - ignored");
+				return;
+			}
+			const double asked = a_data["deg"].get<double>();
+			if (!std::isfinite(asked) || std::fabs(asked) > 180.0) {
+				spdlog::warn("[compare] compare-turn of {} deg is not a finite step inside 180 - ignored", asked);
+				return;
+			}
+			if (g_rebirth.pending) {
+				spdlog::warn("[compare] compare-turn while a new copy is being made - ignored");
+				return;
+			}
+			auto* player = Player();
+			auto* ref = TwinRef();
+			if (!player || !ref || !TwinHere() || !ref->Is3DLoaded()) {
+				spdlog::warn("[compare] compare-turn: there is no second figure with a body in this room - ignored");
+				return;
+			}
+
+			constexpr double kPi = 3.14159265358979323846;
+			const auto       t0 = Clock::now();
+			g_turn = static_cast<float>(std::remainder(static_cast<double>(g_turn) + asked * kPi / 180.0, 2.0 * kPi));
+			auto heading = player->GetAngle();
+			heading.z += g_turn;
+			ref->SetAngle(heading);
+			ref->Update3DPosition(true);
+			const double took = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+			spdlog::info("[compare] turn: asked {:+.1f} deg, kept {:+.1f} deg, she reads z={:.4f} (player z={:.4f}), took {:.3f} ms",
+				asked, static_cast<double>(g_turn) * 180.0 / kPi, ref->GetAngle().z, player->GetAngle().z, took);
+		}
+
 		void OnCompareSet(const nlohmann::json& a_data)
 		{
 			if (!Session::MenuOpen()) {
@@ -2065,6 +2118,7 @@ namespace Lifecast::Edit::Compare
 		void OnOpened()
 		{
 			g_on = false;
+			g_turn = 0.0f;
 			g_why.clear();
 			// Read first, before anything this opening does: the console is still
 			// open here when the editor was opened from it (the switcher only
@@ -2117,6 +2171,11 @@ namespace Lifecast::Edit::Compare
 			if (g_on) {
 				Park("the RaceSex Menu closed");
 			}
+			if (g_turn != 0.0f) {
+				spdlog::info("[compare] turn: kept 0.0 deg (the editor closed; it was {:+.1f} deg)",
+					static_cast<double>(g_turn) * 180.0 / 3.14159265358979323846);
+			}
+			g_turn = 0.0f;
 			// Culled is not gone: until the Disable below she can still be
 			// talked to in the world (E36). Not from now on.
 			if (auto* actor = Twin()) {
@@ -2171,6 +2230,7 @@ namespace Lifecast::Edit::Compare
 		Panel::Bridge::On("compare-get", &OnCompareGet);
 		Panel::Bridge::On("compare-set", &OnCompareSet);
 		Panel::Bridge::On("compare-update", &OnCompareUpdate);
+		Panel::Bridge::On("compare-turn", &OnCompareTurn);
 #ifdef LIFECAST_TUNING
 		Panel::Bridge::On("compare-dress", &OnCompareDress);
 		Panel::Bridge::On("compare-graph", &OnCompareGraph);
@@ -2210,6 +2270,7 @@ namespace Lifecast::Edit::Compare
 		g_cull = false;
 		g_cellId = 0;
 		g_on = false;
+		g_turn = 0.0f;
 	}
 
 	void MirrorWorn()
