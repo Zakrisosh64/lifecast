@@ -28,6 +28,44 @@ namespace Lifecast::Core::SkeeLink
 		// cannot separate them: the interface is not reachable from outside,
 		// or this is not the key it is registered under. Anything concluded
 		// from a null is stated with that scope attached.
+		// The lowest BodyMorph version this plugin calls into. The four
+		// methods used here (SetMorph, VisitMorphValues, ApplyBodyMorphs,
+		// UpdateModelWeight) sit in the same slots from version 4 to the
+		// header's version 5, which only appended AddMorphShapeCallback at
+		// the end of the table, and AddMorphShapeCallback is never called.
+		// RaceMenu 0.4.19.16 answers 4 (read from its skee64.dll in game,
+		// "QueryInterface("BodyMorph") ... version 4").
+		constexpr std::uint32_t kBodyMorphFloor = Skee::IBodyMorphInterface::kPluginVersion4;
+
+		// The BodyMorph interface when it is there and at or above the
+		// floor; nullptr, with a warning that says what was read and what
+		// was required, otherwise. The accepted version is logged once per
+		// value, not at every call.
+		Skee::IBodyMorphInterface* BodyMorph(const char* a_what, const RE::Actor* a_actor)
+		{
+			auto* map = GetInterfaceMap();
+			auto* iface = map ? map->QueryInterface("BodyMorph") : nullptr;
+			if (!a_actor || !iface) {
+				spdlog::warn("[skee] body morphs NOT {}: actor {}, BodyMorph interface {}",
+					a_what, static_cast<const void*>(a_actor), static_cast<const void*>(iface));
+				return nullptr;
+			}
+			const auto version = iface->GetVersion();
+			const auto header = static_cast<std::uint32_t>(Skee::IBodyMorphInterface::kCurrentPluginVersion);
+			if (version < kBodyMorphFloor) {
+				spdlog::warn("[skee] body morphs NOT {}: BodyMorph interface version {}, needs {} or newer (header describes {})",
+					a_what, version, kBodyMorphFloor, header);
+				return nullptr;
+			}
+			static std::uint32_t s_logged = 0;
+			if (s_logged != version) {
+				s_logged = version;
+				spdlog::info("[skee] BodyMorph interface: version {} accepted (floor {}, header describes {})",
+					version, kBodyMorphFloor, header);
+			}
+			return static_cast<Skee::IBodyMorphInterface*>(iface);
+		}
+
 		constexpr std::array kInterfaceNames{
 			"BodyMorph",
 			"NiTransform",
@@ -124,20 +162,11 @@ namespace Lifecast::Core::SkeeLink
 	bool ReadBodyMorphs(RE::Actor* a_actor, std::vector<MorphValue>& a_out)
 	{
 		a_out.clear();
-		auto* map = GetInterfaceMap();
-		auto* iface = map ? map->QueryInterface("BodyMorph") : nullptr;
-		if (!a_actor || !iface) {
-			spdlog::warn("[skee] body morphs NOT read: actor {}, BodyMorph interface {}",
-				static_cast<const void*>(a_actor), static_cast<const void*>(iface));
-			return false;
-		}
-		// VisitMorphValues is in the table the vendored header describes as
-		// version 5. An older interface may lay its table out differently, so
-		// it is not called.
-		const auto version = iface->GetVersion();
-		if (version < Skee::IBodyMorphInterface::kCurrentPluginVersion) {
-			spdlog::warn("[skee] body morphs NOT read: BodyMorph interface version {}, header describes {}",
-				version, static_cast<std::uint32_t>(Skee::IBodyMorphInterface::kCurrentPluginVersion));
+		// VisitMorphValues is in the same slot from version 4 on (see
+		// kBodyMorphFloor); an older interface may lay its table out
+		// differently, so it is not called.
+		auto* morphs = BodyMorph("read", a_actor);
+		if (!morphs) {
 			return false;
 		}
 
@@ -160,28 +189,18 @@ namespace Lifecast::Core::SkeeLink
 		// The same first-base cast as ClearSkinOverrides, for the same reason.
 		auto*     refr = reinterpret_cast<Skee::TESObjectREFR*>(a_actor);
 		Collector collector(a_out);
-		static_cast<Skee::IBodyMorphInterface*>(iface)->VisitMorphValues(refr, collector);
+		morphs->VisitMorphValues(refr, collector);
 		return true;
 	}
 
 	bool WriteBodyMorphs(RE::Actor* a_actor, const std::vector<MorphValue>& a_values, std::size_t& a_written)
 	{
 		a_written = 0;
-		auto* map = GetInterfaceMap();
-		auto* iface = map ? map->QueryInterface("BodyMorph") : nullptr;
-		if (!a_actor || !iface) {
-			spdlog::warn("[skee] body morphs NOT written: actor {}, BodyMorph interface {}",
-				static_cast<const void*>(a_actor), static_cast<const void*>(iface));
-			return false;
-		}
-		const auto version = iface->GetVersion();
-		if (version < Skee::IBodyMorphInterface::kCurrentPluginVersion) {
-			spdlog::warn("[skee] body morphs NOT written: BodyMorph interface version {}, header describes {}",
-				version, static_cast<std::uint32_t>(Skee::IBodyMorphInterface::kCurrentPluginVersion));
+		auto* morphs = BodyMorph("written", a_actor);
+		if (!morphs) {
 			return false;
 		}
 		auto* refr = reinterpret_cast<Skee::TESObjectREFR*>(a_actor);
-		auto* morphs = static_cast<Skee::IBodyMorphInterface*>(iface);
 		for (const auto& v : a_values) {
 			morphs->SetMorph(refr, v.name.c_str(), v.key.c_str(), v.value);
 			++a_written;
@@ -191,19 +210,11 @@ namespace Lifecast::Core::SkeeLink
 
 	bool ApplyBodyMorphs(RE::Actor* a_actor)
 	{
-		auto* map = GetInterfaceMap();
-		auto* iface = map ? map->QueryInterface("BodyMorph") : nullptr;
-		if (!a_actor || !iface) {
-			spdlog::warn("[skee] body morphs NOT applied: actor {}, BodyMorph interface {}",
-				static_cast<const void*>(a_actor), static_cast<const void*>(iface));
-			return false;
-		}
-		if (iface->GetVersion() < Skee::IBodyMorphInterface::kCurrentPluginVersion) {
-			spdlog::warn("[skee] body morphs NOT applied: BodyMorph interface version {}", iface->GetVersion());
+		auto* morphs = BodyMorph("applied", a_actor);
+		if (!morphs) {
 			return false;
 		}
 		auto* refr = reinterpret_cast<Skee::TESObjectREFR*>(a_actor);
-		auto* morphs = static_cast<Skee::IBodyMorphInterface*>(iface);
 		morphs->ApplyBodyMorphs(refr);
 		morphs->UpdateModelWeight(refr, true);
 		return true;

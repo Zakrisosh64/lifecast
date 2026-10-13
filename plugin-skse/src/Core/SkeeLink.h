@@ -58,7 +58,7 @@ namespace Lifecast::Core::SkeeLink
 	// BodyMorph interface (VisitMorphValues) - nothing is written.
 	//
 	// False, and a_out left empty, when the interface is not there or reports
-	// a version older than the vendored header describes.
+	// a version older than 4 (the floor; the vendored header describes 5).
 	bool ReadBodyMorphs(RE::Actor* a_actor, std::vector<MorphValue>& a_out);
 
 	// E21.2 - the second figure's body. Writes every value in a_values onto
@@ -67,7 +67,7 @@ namespace Lifecast::Core::SkeeLink
 	// player holds. a_written counts the calls made.
 	//
 	// False, and nothing written, when the interface is not there or reports
-	// a version older than the vendored header describes. The same first-base
+	// a version older than 4 (the floor). The same first-base
 	// cast as the readers, and for the same reason.
 	bool WriteBodyMorphs(RE::Actor* a_actor, const std::vector<MorphValue>& a_values, std::size_t& a_written);
 
