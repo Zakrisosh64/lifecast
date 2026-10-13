@@ -150,6 +150,26 @@
 
   const list = LifecastControls.el("ul", "preset-list");
 
+  // The two tabs of this section. "RaceMenu Portraits" is another mod's
+  // window, drawn in front of the scene while the panel steps back to its
+  // card; it exists only when the DLL says that mod and its menu framework
+  // are loaded (never a dependency). F4 comes back here, on "Presets".
+  const tabs = LifecastControls.el("div", "preset-tabs");
+  const tabPresets = LifecastControls.el("button", "panel-button is-on", "Presets");
+  const tabPortraits = LifecastControls.el("button", "panel-button", "RaceMenu Portraits");
+  tabPortraits.title = "Opens RaceMenu Portraits' own window over the scene (F4 comes back)";
+  for (const b of [tabPresets, tabPortraits]) {
+    b.type = "button";
+    b.tabIndex = -1;
+    tabs.appendChild(b);
+  }
+  tabs.hidden = true;
+  tabPortraits.addEventListener("click", () => LifecastBridge.send("show-portraits"));
+  LifecastBridge.on("portraits", (data) => {
+    tabs.hidden = !(data && data.available === true);
+  });
+
+  section.body.appendChild(tabs);
   section.body.appendChild(field);
   section.body.appendChild(bar);
   section.body.appendChild(status);
@@ -709,6 +729,7 @@
   LifecastBridge.whenAttached((ok) => {
     if (ok) {
       LifecastBridge.send("presets-get");
+      LifecastBridge.send("portraits-get");
     }
   });
 

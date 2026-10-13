@@ -1044,6 +1044,12 @@ html[data-belt-all] #sections .all-line-slider .slider-name {
   outline: none;
 }
 
+.preset-tabs {
+  display: flex;
+  gap: 6px;
+  margin: 0 0 8px;
+}
+
 .preset-bar {
   display: flex;
   gap: 6px;

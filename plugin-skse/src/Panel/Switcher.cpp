@@ -4,6 +4,7 @@
 #include "Panel/Switcher.h"
 
 #include "Edit/FilmPaint.h"
+#include "Edit/Session.h"
 #include "Panel/Bridge.h"
 #include "Panel/Panel.h"
 #include "Panel/RaceMenuFilm.h"
@@ -33,6 +34,7 @@ namespace Lifecast::Panel::Switcher
 			kClosed,    // the RaceSex Menu is not open
 			kLifecast,   // the panel is on screen and owns (or is getting) focus
 			kRaceMenu,  // RaceMenu's film is on screen, the panel is hidden
+			kPortraits, // RaceMenu stays hidden; a window of another mod is in front, the panel is a card
 		};
 
 		Mode g_mode = Mode::kClosed;
@@ -53,6 +55,84 @@ namespace Lifecast::Panel::Switcher
 		std::uint32_t g_opens = 0;
 		std::uint32_t g_swaps = 0;
 
+		// While another mod's window holds the Presets mode, the loads it asks
+		// of RaceMenu's editor ("Load onto my character") are heard through the
+		// editor's own "loadedPreset" event - the one the Lifecast's loads wait
+		// on - so that coming back can re-read the character. Not a dependency:
+		// the event is RaceMenu's, and who raised it does not matter here.
+		constexpr auto kEditor = "_root.RaceSexMenuBaseInstance.RaceSexPanelsInstance.presetEditor";
+
+		struct LoadHeard
+		{
+			std::uint32_t heard{ 0 };
+			std::uint32_t ok{ 0 };
+		};
+		LoadHeard g_loads;
+
+		class LoadedPresetHandler : public RE::GFxFunctionHandler
+		{
+		public:
+			void Call(Params& a_params) override
+			{
+				RE::GFxValue success;
+				bool         ok = false;
+				if (a_params.argCount > 0 && a_params.args[0].IsObject() &&
+					a_params.args[0].GetMember("success", &success) && success.IsBool()) {
+					ok = success.GetBool();
+				}
+				++g_loads.heard;
+				g_loads.ok += ok ? 1 : 0;
+				spdlog::info("[switch] loadedPreset heard while the window is in front: success {} ({} heard, {} ok)", ok,
+					g_loads.heard, g_loads.ok);
+			}
+		};
+
+		// Alive only between ListenForLoads() and StopListening(), UI thread.
+		std::optional<std::array<RE::GFxValue, 3>> g_listener;
+
+		void ListenForLoads()
+		{
+			g_loads = {};
+			auto*        ui = RE::UI::GetSingleton();
+			auto         menu = ui ? ui->GetMenu<RE::RaceSexMenu>() : nullptr;
+			auto*        movie = menu ? menu->uiMovie.get() : nullptr;
+			RE::GFxValue editor;
+			if (!movie || !movie->GetVariable(&editor, kEditor) || !editor.IsObject() ||
+				!editor.HasMember("addEventListener")) {
+				spdlog::info("[switch] the preset editor cannot be reached - a load from the window will not be heard");
+				return;
+			}
+			static auto  handler = RE::make_gptr<LoadedPresetHandler>();
+			RE::GFxValue fn;
+			RE::GFxValue scope;
+			RE::GFxValue type;
+			RE::GFxValue member;
+			movie->CreateFunction(&fn, handler.get());
+			movie->CreateObject(&scope);
+			scope.SetMember("heard", fn);
+			movie->CreateString(&type, "loadedPreset");
+			movie->CreateString(&member, "heard");
+			g_listener = std::array<RE::GFxValue, 3>{ type, scope, member };
+			const bool added = editor.Invoke("addEventListener", *g_listener);
+			spdlog::info("[switch] listening for loadedPreset while the window is in front: {}", added);
+		}
+
+		// Returns how many loads the window made that succeeded.
+		std::uint32_t StopListening()
+		{
+			if (g_listener) {
+				auto*        ui = RE::UI::GetSingleton();
+				auto         menu = ui ? ui->GetMenu<RE::RaceSexMenu>() : nullptr;
+				auto*        movie = menu ? menu->uiMovie.get() : nullptr;
+				RE::GFxValue editor;
+				if (movie && movie->GetVariable(&editor, kEditor) && editor.IsObject()) {
+					editor.Invoke("removeEventListener", *g_listener);
+				}
+				g_listener.reset();
+			}
+			return g_loads.ok;
+		}
+
 		const char* ModeName(Mode a_mode)
 		{
 			switch (a_mode) {
@@ -62,6 +142,8 @@ namespace Lifecast::Panel::Switcher
 				return "lifecast";
 			case Mode::kRaceMenu:
 				return "racemenu";
+			case Mode::kPortraits:
+				return "portraits";
 			default:
 				return "?";
 			}
@@ -213,6 +295,9 @@ namespace Lifecast::Panel::Switcher
 			// that signal: F4 hides it too, and the player comes back to it.
 			Bridge::Send("menu-closed");
 
+			// The editor goes with the menu; the listener is only let go of.
+			g_listener.reset();
+
 			// The film goes away with the menu. The panel is hidden, not
 			// released: re-creating it would make a new browser instance.
 			Panel::DisarmFocusChord();
@@ -232,6 +317,24 @@ namespace Lifecast::Panel::Switcher
 			if (hasFor) {
 				RaceMenuTabs::Select(a_data["for"].get<std::string>());
 			}
+		}
+
+		// RaceMenu Portraits and the menu framework it draws with, both loaded.
+		// By module, like the OBody check: no dependency, and without them the
+		// page has no tab to show.
+		bool PortraitsLoaded()
+		{
+			return REX::W32::GetModuleHandleW(L"RaceMenuPortraits.dll") &&
+			       REX::W32::GetModuleHandleW(L"SKSEMenuFramework.dll");
+		}
+
+		// "portraits-get": the page asking whether its second tab exists.
+		void OnPagePortraitsGet(const nlohmann::json&)
+		{
+			const bool loaded = PortraitsLoaded();
+			spdlog::info("[switch] portraits tab: {}", loaded ? "RaceMenu Portraits and its menu framework are loaded - offered"
+			                                                  : "not offered (a module is not loaded)");
+			Bridge::Send("portraits", { { "available", loaded } });
 		}
 
 		// "racemenu-categories-get" with no data: the page asking what
@@ -300,7 +403,7 @@ namespace Lifecast::Panel::Switcher
 				// one-figure rule is on and watching its subject drift.
 				Stage::Tick();
 
-				if (!a_event || g_mode != Mode::kRaceMenu) {
+				if (!a_event || (g_mode != Mode::kRaceMenu && g_mode != Mode::kPortraits)) {
 					// With the Lifecast on screen, F4 never gets here: it is
 					// the panel's focus chord and Meridian consumes it.
 					return RE::BSEventNotifyControl::kContinue;
@@ -354,6 +457,8 @@ namespace Lifecast::Panel::Switcher
 
 		Bridge::On("show-racemenu", &OnPageShowRaceMenu);
 		Bridge::On("racemenu-categories-get", &OnPageCategories);
+		Bridge::On("portraits-get", &OnPagePortraitsGet);
+		Bridge::On("show-portraits", [](const nlohmann::json&) { ShowPortraits(); });
 
 		g_installed = true;
 		spdlog::info("[switch] installed - F4 swaps the Lifecast and RaceMenu");
@@ -361,12 +466,13 @@ namespace Lifecast::Panel::Switcher
 
 	void ShowLifecast()
 	{
-		if (g_mode != Mode::kRaceMenu || !Panel::Browser()) {
+		if ((g_mode != Mode::kRaceMenu && g_mode != Mode::kPortraits) || !Panel::Browser()) {
 			return;
 		}
 
 		++g_swaps;
 		spdlog::info("[switch] show the Lifecast (swap #{})", g_swaps);
+		const bool fromWindow = g_mode == Mode::kPortraits;
 
 		// The order is the point. The way out exists before the panel can
 		// take the keyboard; focus is the very last thing asked for.
@@ -381,6 +487,48 @@ namespace Lifecast::Panel::Switcher
 		SetMode(Mode::kLifecast);
 
 		Panel::RequestFocus();
+
+		if (fromWindow) {
+			// The window may have loaded a preset onto the character while the
+			// panel was a card: the panel's values are from before it. The load
+			// is RaceMenu's, so what the panel does is what it does for any
+			// load it did not make itself - read the character again.
+			if (auto* tasks = SKSE::GetTaskInterface()) {
+				tasks->AddUITask([]() {
+					const auto ok = StopListening();
+					spdlog::info("[switch] back from the window: {} load(s) heard, {} ok", g_loads.heard, ok);
+					if (ok > 0) {
+						Edit::Session::Replaced("a preset was loaded by a window of another mod");
+					}
+				});
+			}
+		}
+	}
+
+	void ShowPortraits()
+	{
+		if (g_mode != Mode::kLifecast || !Panel::Browser()) {
+			return;
+		}
+		if (!PortraitsLoaded()) {
+			spdlog::warn("[switch] show-portraits asked, and RaceMenu Portraits or its menu framework is not loaded");
+			return;
+		}
+
+		++g_swaps;
+		spdlog::info("[switch] show the Presets window of another mod over the Lifecast (swap #{})", g_swaps);
+
+		// The film stays hidden: the window is drawn over the scene, not over
+		// RaceMenu. Focus goes to the game (the card), so the keyboard and the
+		// mouse reach the window, and F4 comes back through the input tick.
+		Panel::ShowCard("F4");
+		Panel::DisarmFocusChord();
+		RaceMenuTabs::Select("presets");
+		if (auto* tasks = SKSE::GetTaskInterface()) {
+			tasks->AddUITask([]() { ListenForLoads(); });
+		}
+
+		SetMode(Mode::kPortraits);
 	}
 
 	void ShowRaceMenu()

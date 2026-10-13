@@ -41,4 +41,9 @@ namespace Lifecast::Panel::Switcher
 	// The two directions. Both do nothing while the RaceSex Menu is closed.
 	void ShowLifecast();
 	void ShowRaceMenu();
+
+	// A window another mod hangs on RaceMenu's Presets mode, in front of the
+	// scene with the film still hidden: the panel gives its focus up and shows
+	// its card, and F4 brings the Lifecast back. Only from the Lifecast.
+	void ShowPortraits();
 }
