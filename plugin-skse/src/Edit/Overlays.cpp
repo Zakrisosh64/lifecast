@@ -68,17 +68,44 @@ namespace Lifecast::Edit::Overlays
 
 		std::uint32_t g_sets = 0;
 
+		// Asks SKEE for one of its interfaces and keeps it only when the version
+		// it reports is the one the vendored header describes. The vtable of an
+		// older interface is laid out differently (RaceMenu 0.4.16 for 1.5.97
+		// ships both of these as version 1), so a call through the newer header
+		// lands on the wrong slot, with no compile error and no immediate crash.
+		// GetVersion is the first function after the destructor in the base
+		// IPluginInterface in every revision of the header, so reading it is safe
+		// whatever the version; everything past it is not. An interface below the
+		// required version is dropped, and the callers already treat nullptr as
+		// "paint overlays disabled".
+		template <class T>
+		T* AskSkee(const char* a_name, std::uint32_t a_required)
+		{
+			auto* map = Core::SkeeLink::GetInterfaceMap();
+			auto* raw = map ? map->QueryInterface(a_name) : nullptr;
+			if (!raw) {
+				spdlog::info("[overlays] SKEE {} interface: not found - paint overlays disabled", a_name);
+				return nullptr;
+			}
+			const auto version = raw->GetVersion();
+			if (version < a_required) {
+				spdlog::warn("[overlays] SKEE {} interface: version {}, header describes {} - refused, paint overlays disabled",
+					a_name, version, a_required);
+				return nullptr;
+			}
+			spdlog::info("[overlays] SKEE {} interface: found, version {}, header describes {} - accepted",
+				a_name, version, a_required);
+			return static_cast<T*>(raw);
+		}
+
 		Skee::IOverlayInterface* Overlay()
 		{
 			static Skee::IOverlayInterface* s_iface = nullptr;
 			static bool                     s_asked = false;
 			if (!s_asked) {
 				s_asked = true;
-				auto* map = Core::SkeeLink::GetInterfaceMap();
-				auto* raw = map ? map->QueryInterface("Overlay") : nullptr;
-				s_iface = static_cast<Skee::IOverlayInterface*>(raw);
-				spdlog::info("[overlays] SKEE Overlay interface: {}",
-					s_iface ? "found" : "not found - paint overlays disabled");
+				s_iface = AskSkee<Skee::IOverlayInterface>(
+					"Overlay", static_cast<std::uint32_t>(Skee::IOverlayInterface::kCurrentPluginVersion));
 			}
 			return s_iface;
 		}
@@ -89,11 +116,8 @@ namespace Lifecast::Edit::Overlays
 			static bool                      s_asked = false;
 			if (!s_asked) {
 				s_asked = true;
-				auto* map = Core::SkeeLink::GetInterfaceMap();
-				auto* raw = map ? map->QueryInterface("Override") : nullptr;
-				s_iface = static_cast<Skee::IOverrideInterface*>(raw);
-				spdlog::info("[overlays] SKEE Override interface: {}",
-					s_iface ? "found" : "not found - paint overlays disabled");
+				s_iface = AskSkee<Skee::IOverrideInterface>(
+					"Override", static_cast<std::uint32_t>(Skee::IOverrideInterface::kCurrentPluginVersion));
 			}
 			return s_iface;
 		}
