@@ -1107,6 +1107,11 @@ html[data-belt-region] .section.is-region .preset-list {
   background: var(--row-selected);
 }
 
+/* The controller's ring on a row sits inside it: the list clips what is outside (pad.js). */
+.preset-row.pad-focus {
+  outline-offset: -2px;
+}
+
 .preset-name {
   flex: 1 1 auto;
   min-width: 0;

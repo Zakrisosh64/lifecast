@@ -51,7 +51,10 @@
     status.textContent = current ? "Current: " + current : "Current: none";
     list.replaceChildren();
     for (const name of names) {
-      const li = LifecastControls.el("li", "preset-row");
+      const li = LifecastControls.el("li", "preset-row pad-row");
+      // The controller's ring stops on a row and keeps its place through the
+      // re-render that follows a choice (pad.js, data-pad-key).
+      li.dataset.padKey = "obody:" + name;
       li.appendChild(LifecastControls.el("span", "preset-name", name));
       if (name === current) {
         li.classList.add("is-selected");
@@ -66,6 +69,9 @@
       });
       list.appendChild(li);
     }
+    // The rows are new elements: the controller's ring, if it was on one,
+    // moves to the new row of the same name (pad.js).
+    document.dispatchEvent(new CustomEvent("lifecast-pad-refresh"));
   }
 
   LifecastBridge.on("body", (data) => {

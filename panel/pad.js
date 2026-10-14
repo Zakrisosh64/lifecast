@@ -13,6 +13,11 @@
 //   LB / RB             the previous / next category of the belt, wrapping
 //   right stick         turns the character, as the drag on the stage does
 //   LT                  the stage's zoom, as its Zoom button (+ in the free camera)
+//   RT                  the stage's zoom out: its - in the free camera, the same
+//                       RaceMenu zoom as LT in standard
+//
+// In a list of rows that are not buttons (the OBody list) up and down walk the
+// rows one by one and A is the row's click.
 //
 // Every action goes through the path the mouse already uses - the button's
 // own click, the slider's own < >, the stage's drag - so nothing here writes
@@ -29,7 +34,8 @@ const LifecastPad = (() => {
   const STICK_EVERY_MS = 160;     // and then every this
   const TURN_PX_PER_S = 500;      // the right stick at full tilt, in the drag's own pixels a second
 
-  const TARGETS = "button, input, select, textarea, .slider";
+  // .pad-row: a list's row that is clickable but is not a button (the OBody list).
+  const TARGETS = "button, input, select, textarea, .slider, .pad-row";
   const TEXT = "input:not([type]), input[type=text], input[type=search], textarea";
 
   let cur = null;
@@ -64,11 +70,28 @@ const LifecastPad = (() => {
       if (!el.classList.contains("slider") && el.closest(".slider") && !el.matches(TEXT) && !el.closest(".listpop")) {
         continue;
       }
+      // A row scrolled out of its list is not a stop for a move across the
+      // page: the rows of a list are walked one by one (go()), and a clipped
+      // one would be "nearest" to a control below the list.
+      if (el.classList.contains("pad-row") && clippedRow(el)) {
+        continue;
+      }
       if (!hidden(el)) {
         out.push(el);
       }
     }
     return out;
+  }
+
+  function clippedRow(a_el) {
+    const list = a_el.parentElement;
+    if (!list) {
+      return false;
+    }
+    const r = a_el.getBoundingClientRect();
+    const l = list.getBoundingClientRect();
+    const mid = r.top + r.height / 2;
+    return mid < l.top || mid > l.bottom;
   }
 
   function show() {
@@ -95,6 +118,19 @@ const LifecastPad = (() => {
   }
 
   function valid() {
+    // A list that was drawn again (OBody answers every choice with its whole
+    // list) leaves the ring on a detached row: it moves to the row that has
+    // the same data-pad-key.
+    if (cur && !document.contains(cur) && cur.dataset && cur.dataset.padKey) {
+      const key = cur.dataset.padKey;
+      const again = Array.from(document.querySelectorAll("[data-pad-key]")).find((el) => el.dataset.padKey === key);
+      if (again) {
+        cur = again;
+        if (shown) {
+          show();
+        }
+      }
+    }
     return cur && document.contains(cur) && !hidden(cur);
   }
 
@@ -271,6 +307,17 @@ const LifecastPad = (() => {
       if (b && !b.disabled) {
         b.click();
         last = "step " + a_dir;
+        return;
+      }
+    }
+    // Up and down in a list of rows: the neighbouring row, one per press,
+    // scrolled into view by the ring (show()); past either end the move
+    // goes on across the page as from any other stop.
+    if (valid() && cur.classList.contains("pad-row") && (a_dir === "up" || a_dir === "down")) {
+      const row = a_dir === "down" ? cur.nextElementSibling : cur.previousElementSibling;
+      if (row && row.classList.contains("pad-row")) {
+        setCur(row);
+        last = "row " + a_dir;
         return;
       }
     }
@@ -479,8 +526,19 @@ const LifecastPad = (() => {
       presses += 1;
       document.dispatchEvent(new CustomEvent("lifecast-stage-zoom"));
       last = "zoom";
+    } else if (a_data.b === "RT") {
+      // The other way: Farther in the free camera, the same RaceMenu zoom as
+      // LT in standard (it only has the two positions).
+      presses += 1;
+      document.dispatchEvent(new CustomEvent("lifecast-stage-farther"));
+      last = "farther";
     }
   }
+
+  // A list drew its rows again: the ring finds its row now, not at the next press.
+  document.addEventListener("lifecast-pad-refresh", () => {
+    valid();
+  });
 
   // The mouse or the keyboard back in the player's hand: the ring steps aside.
   document.addEventListener("pointerdown", hide, true);

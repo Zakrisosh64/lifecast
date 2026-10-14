@@ -316,6 +316,19 @@
     }
   });
 
+  // The controller's RT (pad.js): what the Farther button (-) does in the free
+  // camera; in standard RaceMenu's zoom is a toggle, so it is the LT's.
+  document.addEventListener("lifecast-stage-farther", () => {
+    if (!state || !state.ready) {
+      return;
+    }
+    if (state.free) {
+      move("distance", DISTANCE_STEP);
+    } else {
+      sendZoom();
+    }
+  });
+
   stage.addEventListener("wheel", (e) => {
     if (onControls(e.target)) {
       return;
