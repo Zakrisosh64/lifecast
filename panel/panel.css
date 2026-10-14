@@ -1468,3 +1468,12 @@ html.card-mode body > *:not(#back-card) {
 .back-card[hidden] {
   display: none;
 }
+
+/* The controller's focus ring (pad.js). A class, not :focus: the ring never
+   takes the browser's focus, so the mouse and the keyboard never see it. */
+.pad-focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 4px;
+  box-shadow: 0 0 10px rgba(143, 217, 160, 0.65);
+}

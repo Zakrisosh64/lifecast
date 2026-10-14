@@ -90,6 +90,7 @@ add_commonlibsse_plugin(
         src/Edit/Tints.cpp
         src/Edit/Undress.cpp
         src/Panel/Bridge.cpp
+        src/Panel/Pad.cpp
         src/Panel/Panel.cpp
         src/Panel/RaceMenuFilm.cpp
         src/Panel/RaceMenuTabs.cpp

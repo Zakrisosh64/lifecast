@@ -295,6 +295,14 @@
   stage.addEventListener("pointercancel", endDrag);
   stage.addEventListener("contextmenu", (e) => e.preventDefault());
 
+  // The controller's right stick (pad.js): the left-button drag's turn, in the drag's own pixels.
+  document.addEventListener("lifecast-stage-drag", (e) => {
+    const dx = e.detail ? Number(e.detail.dx) : 0;
+    if (dx) {
+      move("turn", dx * TURN_PER_PX);
+    }
+  });
+
   stage.addEventListener("wheel", (e) => {
     if (onControls(e.target)) {
       return;

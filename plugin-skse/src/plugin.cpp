@@ -33,6 +33,7 @@
 #include "Edit/RaceSex.h"
 #include "Edit/Tints.h"
 #include "Edit/Undress.h"
+#include "Panel/Pad.h"
 #include "Panel/Panel.h"
 #include "Panel/RaceMenuTabs.h"
 #include "Panel/Stage.h"
@@ -130,6 +131,10 @@ namespace
 			// which exist from here on. The browser itself is not created
 			// now: it is born the first time the RaceSex Menu opens.
 			Lifecast::Panel::Switcher::Install();
+
+			// The controller, while the panel has the focus: its events go to the
+			// page as "pad" messages.
+			Lifecast::Panel::Pad::Install();
 
 			// The editing sections write the player's data from the page;
 			// the session they share owns the menu and input sinks and the
