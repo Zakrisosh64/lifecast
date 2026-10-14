@@ -12,6 +12,7 @@
 //                       colour picker, clears the search
 //   LB / RB             the previous / next category of the belt, wrapping
 //   right stick         turns the character, as the drag on the stage does
+//   LT                  the stage's zoom, as its Zoom button (+ in the free camera)
 //
 // Every action goes through the path the mouse already uses - the button's
 // own click, the slider's own < >, the stage's drag - so nothing here writes
@@ -149,6 +150,13 @@ const LifecastPad = (() => {
     return "page";
   }
 
+  // The two bars over the belt: the Character bar and the camera bar. With
+  // the column open every up out of the belt went to the column and the
+  // zone rule below kept the plain nearest stop away, so nothing ever
+  // reached them (measured: no stop outside the camera bar had a move into
+  // it).
+  const BARS = ["control", "stage"];
+
   // The nearest stop in a direction: it has to be past the current one in
   // that direction, and the score is the distance along the direction plus
   // twice the distance across it, edge to edge - a stop straight below beats
@@ -160,8 +168,56 @@ const LifecastPad = (() => {
     }
     const here = zone(cur);
     const inZone = (name) => all.filter((el) => zone(el) === name);
+    const a = cur.getBoundingClientRect();
+    const horizontal = a_dir === "left" || a_dir === "right";
+    // The gap across the move, edge to edge: 0 is a stop in the same row (or
+    // column).
+    const across = (el) => {
+      const b = el.getBoundingClientRect();
+      return horizontal ? Math.max(0, Math.max(a.top, b.top) - Math.min(a.bottom, b.bottom))
+        : Math.max(0, Math.max(a.left, b.left) - Math.min(a.right, b.right));
+    };
+    const inside = nearestIn(a_dir, inZone(here), 1);
+    // Left and right: a stop in the row's own other zone beats one of another
+    // row of this zone - the column's last row is beside the Character bar,
+    // and the plain zone rule sent it to a chip of a row above.
+    if (horizontal && (!inside || across(inside) > 0)) {
+      const row = nearestIn(a_dir, all.filter((el) => zone(el) !== here && across(el) === 0), 1);
+      if (row) {
+        return row;
+      }
+    }
+    if (a_dir === "up") {
+      // Up out of the belt, the toolbar, the footer or the camera bar: the
+      // bar straight above, else the column below. The belt's first buttons
+      // sit left of both bars, and up from them goes to the nearest bar stop:
+      // a slider row cannot go right (its < >), so the column's last row had
+      // no way in that cost fewer than five presses.
+      if (here === "belt" || here === "toolbar" || here === "footer" || here === "stage") {
+        const above = all.filter((el) => BARS.includes(zone(el)) && zone(el) !== here);
+        const bar = nearestIn("up", above.filter((el) => across(el) === 0), ROW) || (here === "belt" ? nearestIn("up", above, ROW) : null);
+        if (bar) {
+          return bar;
+        }
+      }
+      // The Character bar and the camera bar share a row: up from one is the
+      // other (its first button). Lifted above the camera bar (D135) there is
+      // none in its row and up is the column as before.
+      if (here === "control") {
+        let first_ = null;
+        for (const el of inZone("stage")) {
+          const b = el.getBoundingClientRect();
+          if (Math.max(a.top, b.top) < Math.min(a.bottom, b.bottom) && (!first_ || b.left < first_.getBoundingClientRect().left)) {
+            first_ = el;
+          }
+        }
+        if (first_) {
+          return first_;
+        }
+      }
+    }
     const exit = EXITS[here] && EXITS[here][a_dir];
-    return nearestIn(a_dir, inZone(here), 1) || (exit && nearestIn(a_dir, inZone(exit), ROW)) || nearestIn(a_dir, all, 1);
+    return inside || (exit && nearestIn(a_dir, inZone(exit), ROW)) || nearestIn(a_dir, all, 1);
   }
 
   // Into another zone the nearest ROW wins first: the belt starts right of
@@ -417,6 +473,12 @@ const LifecastPad = (() => {
     } else if (a_data.b === "LB" || a_data.b === "RB") {
       presses += 1;
       category(a_data.b === "RB" ? 1 : -1);
+    } else if (a_data.b === "LT") {
+      // The zoom of the stage's bar, whatever the ring is on: stage.js picks
+      // RaceMenu's far/near in standard and one step closer in free.
+      presses += 1;
+      document.dispatchEvent(new CustomEvent("lifecast-stage-zoom"));
+      last = "zoom";
     }
   }
 

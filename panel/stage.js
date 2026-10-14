@@ -303,6 +303,19 @@
     }
   });
 
+  // The controller's LT (pad.js): what the Zoom button does in standard, one
+  // step of the + in the free camera.
+  document.addEventListener("lifecast-stage-zoom", () => {
+    if (!state || !state.ready) {
+      return;
+    }
+    if (state.free) {
+      move("distance", -DISTANCE_STEP);
+    } else {
+      sendZoom();
+    }
+  });
+
   stage.addEventListener("wheel", (e) => {
     if (onControls(e.target)) {
       return;
