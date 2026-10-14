@@ -58,7 +58,9 @@ const LifecastPad = (() => {
       if (el.matches("input[type=range]")) {
         continue;
       }
-      if (!el.classList.contains("slider") && el.closest(".slider") && !el.matches(TEXT)) {
+      // A list's entries live inside the row that owns it, but they are what
+      // the controller walks while the list is open.
+      if (!el.classList.contains("slider") && el.closest(".slider") && !el.matches(TEXT) && !el.closest(".listpop")) {
         continue;
       }
       if (!hidden(el)) {
@@ -239,13 +241,36 @@ const LifecastPad = (() => {
       return;
     }
     if (cur.classList.contains("slider")) {
+      // A row that offers a list or a colour opens it; a plain slider has
+      // nothing to click (left and right are its < and >).
+      const opener = cur.querySelector(".list-chip, .picker-chip");
+      if (opener && !hidden(opener)) {
+        opener.click();
+        const pop = cur.querySelector(".listpop");
+        if (pop && !pop.hidden) {
+          // Into the list: on the entry in use, else on the first one shown.
+          const items = Array.from(pop.querySelectorAll(".listpop-item")).filter((el) => !hidden(el));
+          const at = items.find((el) => el.classList.contains("selected")) || items[0];
+          if (at) {
+            setCur(at);
+          }
+        }
+        last = "open";
+        return;
+      }
       last = "slider";
       return;
     }
     if (cur.matches(TEXT)) {
       cur.focus();
     }
+    const row = cur.closest(".slider");
     cur.click();
+    // Choosing an entry closes its list with the ring still on it: back to
+    // the row, as the close does.
+    if (row && !valid()) {
+      setCur(row);
+    }
     last = "click";
   }
 
@@ -264,7 +289,8 @@ const LifecastPad = (() => {
         // toggle only flip hidden.
         w.hidden = true;
         if (cur && w.contains(cur)) {
-          const owner = w.closest(".section") && w.closest(".section").querySelector(".list-chip, .swatch, .slider");
+          const owner = w.closest(".slider") ||
+            (w.closest(".section") && w.closest(".section").querySelector(".list-chip, .swatch, .slider"));
           setCur(owner && !hidden(owner) ? owner : first(targets()));
         }
       }
