@@ -44,6 +44,30 @@ namespace Lifecast::Panel::RaceMenuFilm
 			{ "Eye Depth", 17 },
 		};
 
+		// The same 18 sliders as the Russian game labels them (read from a
+		// Russian game's film). Matched as a second table so a translated
+		// game still finds them.
+		constexpr Label kMorphsRu[] = {
+			{ "Длина носа", 0 },
+			{ "Высота носа", 1 },
+			{ "Высота челюсти", 2 },
+			{ "Ширина челюсти", 3 },
+			{ "Челюсть вперед", 4 },
+			{ "Высота скул", 5 },
+			{ "Ширина скул", 6 },
+			{ "Высота глаз", 7 },
+			{ "Расстояние между глазами", 8 },
+			{ "Высота бровей", 9 },
+			{ "Ширина бровей", 10 },
+			{ "Брови вперед", 11 },
+			{ "Высота губ", 12 },
+			{ "Губы вперед", 13 },
+			{ "Ширина подбородка", 14 },
+			{ "Длина подбородка", 15 },
+			{ "Подбородок вперед", 16 },
+			{ "Глубина глазниц", 17 },
+		};
+
 		// The race's preset types, against faceData->parts (nose 0, eyes 2,
 		// mouth 3). Both sides count them the same way.
 		constexpr Label kTypes[] = {
@@ -91,6 +115,29 @@ namespace Lifecast::Panel::RaceMenuFilm
 				if (a_text == l.text) {
 					return l.index;
 				}
+			}
+			return -1;
+		}
+
+		// A translated game renames the three type sliders; their tab does not
+		// change: nose on FACE (16), eyes on EYES (32), mouth on MOUTH (128).
+		int TypeOfFlag(const RE::GFxValue& a_entry)
+		{
+			double f = 0;
+			RE::GFxValue v;
+			if (!a_entry.GetMember("filterFlag", &v) || !v.IsNumber()) {
+				return -1;
+			}
+			f = v.GetNumber();
+			const auto flag = static_cast<std::uint32_t>(f);
+			if (flag & 32) {
+				return 2;
+			}
+			if (flag & 128) {
+				return 3;
+			}
+			if (flag & 16) {
+				return 0;
 			}
 			return -1;
 		}
@@ -172,8 +219,7 @@ namespace Lifecast::Panel::RaceMenuFilm
 			const auto n = entries.GetArraySize();
 			for (std::uint32_t i = 0; i < n; ++i) {
 				RE::GFxValue entry;
-				if (entries.GetElement(i, &entry) && entry.IsObject() && Str(entry, "callbackName") == "ChangeHeadPreset" &&
-					Str(entry, "text") == "Presets") {
+				if (entries.GetElement(i, &entry) && entry.IsObject() && Str(entry, "callbackName") == "ChangeHeadPreset") {
 					a_entry = entry;
 					return true;
 				}
@@ -240,7 +286,10 @@ namespace Lifecast::Panel::RaceMenuFilm
 				const auto text = Str(entry, "text");
 				double     want = 0;
 				if (callback == "ChangeDoubleMorph") {
-					const int morph = IndexOf(kMorphs, text);
+					int morph = IndexOf(kMorphs, text);
+					if (morph < 0) {
+						morph = IndexOf(kMorphsRu, text);
+					}
 					// RaceMenu's own sliders come after the game's, and some
 					// repeat a label ("Brow Width"): the first one is the game's.
 					if (morph < 0 || morphsDone[morph]) {
@@ -253,7 +302,10 @@ namespace Lifecast::Panel::RaceMenuFilm
 						continue;
 					}
 				} else if (callback == "ChangePreset") {
-					const int type = TypeOf(text);
+					int type = TypeOf(text);
+					if (type < 0) {
+						type = TypeOfFlag(entry);
+					}
 					if (type < 0) {
 						continue;
 					}
@@ -328,7 +380,7 @@ namespace Lifecast::Panel::RaceMenuFilm
 			case Slider::kComplexion:
 				return { "ChangeFaceDetails", nullptr };
 			case Slider::kHeadPreset:
-				return { "ChangeHeadPreset", "Presets" };
+				return { "ChangeHeadPreset", nullptr };
 			}
 			return {};
 		}
@@ -349,7 +401,11 @@ namespace Lifecast::Panel::RaceMenuFilm
 					continue;
 				}
 				if (a_target.text && Str(entry, "text") != a_target.text) {
-					continue;
+					// A translated game: the type sliders are found by their tab.
+					const int want = std::string_view(a_target.callback) == "ChangePreset" ? TypeOf(a_target.text) : -1;
+					if (want < 0 || TypeOfFlag(entry) != want) {
+						continue;
+					}
 				}
 				return Num(entry, "sliderID", a_id);
 			}
