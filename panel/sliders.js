@@ -196,6 +196,21 @@
 
     const tabs = new Map(data.tabs.map((t) => [t.id, t]));
     const engineOf = new Map(ENGINE.map((e, i) => [e[0], [i, e[1], e[2]]]));
+    // The Russian game labels the same 18 in Russian: the same rows, by alias.
+    const RU = {
+      "Длина носа": "Nose Length", "Высота носа": "Nose Height",
+      "Высота челюсти": "Jaw Height", "Ширина челюсти": "Jaw Width", "Челюсть вперед": "Jaw Forward",
+      "Высота скул": "Cheekbone Height", "Ширина скул": "Cheekbone Width",
+      "Высота глаз": "Eye Height", "Расстояние между глазами": "Eye Width", "Глубина глазниц": "Eye Depth",
+      "Высота бровей": "Brow Height", "Ширина бровей": "Brow Width", "Брови вперед": "Brow Forward",
+      "Высота губ": "Mouth Height", "Губы вперед": "Mouth Forward",
+      "Ширина подбородка": "Chin Width", "Длина подбородка": "Chin Length", "Подбородок вперед": "Chin Forward",
+    };
+    for (const ru in RU) {
+      if (engineOf.has(RU[ru])) {
+        engineOf.set(ru, engineOf.get(RU[ru]));
+      }
+    }
     const counts = {};
     const notDrawn = [];
 
